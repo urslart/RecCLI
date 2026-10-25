@@ -1,0 +1,7 @@
+{
+    "fps": 60,
+    "quality": "high",
+    "output_folder": "Recordings",
+    "countdown": 3,
+    "filename_format": "recording_{YYYY}-{MM}-{DD}_{HH}-{MM}-{SS}"
+}

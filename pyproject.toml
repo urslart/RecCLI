@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "reccli"
+version = "1.0.0"
+description = "A terminal screen and audio recorder"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "mss>=9.0.0",
+    "sounddevice>=0.4.6",
+    "soundfile>=0.12.0",
+    "rich>=13.0.0",
+    "numpy>=1.24.0",
+]
+
+[project.scripts]
+reccli = "main:main"
+
+[tool.setuptools]
+py-modules = ["main", "menu", "recorder", "audio", "settings", "config", "utils"]

@@ -1,0 +1,20 @@
+# Local Python environments and build artifacts
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Per-machine settings and recordings
+config.json
+Recordings/
+*.mp4
+*.mp3
+*.wav
+
+# Common editor and test artifacts
+.idea/
+.vscode/
+.pytest_cache/
