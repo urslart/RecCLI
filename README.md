@@ -1,4 +1,4 @@
-l# RecCLI
+# RecCLI
 
 A lightweight, modern command-line screen and audio recorder for Windows and Linux.
 
@@ -24,10 +24,17 @@ A lightweight, modern command-line screen and audio recorder for Windows and Lin
 
 Clone the repository and run the installer from the cloned folder:
 
+If you installed the earlier pipx version on this computer, remove it first:
 
 ```bash
-git clone <https://github.com/urslart/RecCLI.git>
-cd reccli
+pipx uninstall reccli
+```
+
+Then clone and install:
+
+```bash
+git clone https://github.com/urslart/RecCLI.git
+cd RecCLI
 ./install.sh
 ```
 
