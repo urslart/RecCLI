@@ -22,7 +22,9 @@ A lightweight, modern command-line screen and audio recorder for Windows and Lin
 
 ## Installation
 
-Clone the repository and run the installer from the cloned folder:
+Clone the repository and use the installer for your operating system.
+
+### Linux
 
 If you installed the earlier pipx version on this computer, remove it first:
 
@@ -73,6 +75,30 @@ To update a clone installation, run `git pull` inside the cloned folder, then
 rerun `./install.sh` to refresh dependencies. The code changes take effect from
 the clone immediately because the Python environment installs the project in
 editable mode.
+
+### Windows 10/11
+
+Install Python 3.10 or newer (enable the Python launcher or add Python to PATH),
+Git, and [FFmpeg](https://ffmpeg.org/). Then open PowerShell and run:
+
+```powershell
+git clone https://github.com/urslart/RecCLI.git
+cd RecCLI
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+The Windows installer creates a private environment under
+`%LOCALAPPDATA%\RecCLI`, installs a `reccli` command, and adds its launcher
+folder to your user PATH. Open a new terminal after installation, then run:
+
+```powershell
+reccli
+```
+
+Windows uses FFmpeg from PATH for recording. To update, run `git pull` in the
+cloned folder and rerun `install.ps1`.
+Windows settings are stored in `%APPDATA%\reccli\config.json`, and recordings
+go to your `Videos\RecCLI` folder by default.
 
 ## Usage
 
@@ -171,6 +197,7 @@ reccli/
 ├── pyproject.toml     # Python package and `reccli` command metadata
 ├── requirements.txt   # Python dependencies
 ├── install.sh         # User-level Linux installer
+├── install.ps1        # User-level Windows installer
 ├── README.md          # This file
 ├── LICENSE            # MIT license
 └── .gitignore         # Excludes local recordings and build artifacts
