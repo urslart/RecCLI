@@ -26,13 +26,7 @@ Clone the repository and use the installer for your operating system.
 
 ### Linux
 
-If you installed the earlier pipx version on this computer, remove it first:
-
-```bash
-pipx uninstall reccli
-```
-
-Then clone and install:
+ clone and install:
 
 ```bash
 git clone https://github.com/urslart/RecCLI.git
