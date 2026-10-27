@@ -78,7 +78,7 @@ Git, and [FFmpeg](https://ffmpeg.org/). Then open PowerShell and run:
 ```powershell
 git clone https://github.com/urslart/RecCLI.git
 cd RecCLI
-powershell -ExecutionPolicy Bypass -File .\install.ps1
+.\install.ps1
 ```
 
 The Windows installer creates a private environment under
@@ -90,8 +90,8 @@ reccli
 ```
 
 Windows uses FFmpeg from PATH for recording. RecCLI uses FFmpeg's Desktop
-Duplication and Media Foundation hardware-encoding path when the installed
-FFmpeg build provides it, and falls back to software screen capture otherwise.
+Duplication and Media Foundation hardware-encoding path when available, then
+falls back to FFmpeg desktop capture before using software capture.
 New Windows configurations default to 30 FPS to reduce load; you can choose a
 higher rate in Settings. WASAPI loopback records the active speaker output;
 the Windows installer also installs the loopback audio dependency. To update,

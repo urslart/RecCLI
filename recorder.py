@@ -60,6 +60,9 @@ class ScreenRecorder:
         self._wayland_capture = os.name != "nt" and bool(os.environ.get("WAYLAND_DISPLAY"))
         self._windows_ddagrab = False
         self._windows_direct_capture = False
+        self._windows_h264_mf = False
+        self._windows_gdigrab = False
+        self._windows_video_started_at: Optional[float] = None
         self._audio_offset: float = 0.0
 
     def _audio_input_args(self, audio_path: str) -> list[str]:
@@ -117,15 +120,24 @@ class ScreenRecorder:
             # Desktop Duplication keeps frames on the GPU instead of copying
             # every full-screen frame through Python.
             try:
-                filters = subprocess.run(
+                filters_result = subprocess.run(
                     ["ffmpeg", "-hide_banner", "-filters"],
                     capture_output=True, text=True, timeout=10,
-                ).stdout
-                encoders = subprocess.run(
+                )
+                encoders_result = subprocess.run(
                     ["ffmpeg", "-hide_banner", "-encoders"],
                     capture_output=True, text=True, timeout=10,
-                ).stdout
-                self._windows_ddagrab = " ddagrab " in filters and " h264_mf " in encoders
+                )
+                devices_result = subprocess.run(
+                    ["ffmpeg", "-hide_banner", "-devices"],
+                    capture_output=True, text=True, timeout=10,
+                )
+                filters = filters_result.stdout + filters_result.stderr
+                encoders = encoders_result.stdout + encoders_result.stderr
+                devices = devices_result.stdout + devices_result.stderr
+                self._windows_h264_mf = " h264_mf " in encoders
+                self._windows_ddagrab = " ddagrab " in filters and self._windows_h264_mf
+                self._windows_gdigrab = " gdigrab " in devices
             except (OSError, subprocess.SubprocessError):
                 self._windows_ddagrab = False
             if self._windows_ddagrab:
@@ -230,17 +242,60 @@ class ScreenRecorder:
                         ffmpeg_cmd, stdin=subprocess.PIPE,
                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                     )
+                    self._windows_video_started_at = time.perf_counter()
                     time.sleep(0.5)
                     if self._ffmpeg_process.poll() is None:
                         self._windows_direct_capture = True
+                        console.print("[dim]Windows capture: Desktop Duplication + Media Foundation[/dim]")
                     else:
                         self._ffmpeg_process = None
+                        self._windows_video_started_at = None
                         console.print(
                             "[yellow]Windows hardware capture could not start; "
                             "falling back to software capture.[/yellow]"
                         )
                 except (OSError, subprocess.SubprocessError):
                     self._ffmpeg_process = None
+
+            # GDI capture is supported by most Windows FFmpeg builds. It
+            # captures and encodes in FFmpeg directly, avoiding Python frame
+            # copies even when Desktop Duplication is unavailable.
+            if not self._windows_direct_capture and self._windows_gdigrab:
+                ffmpeg_cmd = [
+                    "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                    "-f", "gdigrab", "-framerate", str(self.config.fps),
+                    "-draw_mouse", "1", "-i", "desktop",
+                ]
+                if self._windows_h264_mf:
+                    quality = {"low": 60, "medium": 78, "high": 90}.get(
+                        self.config.quality.lower(), 78
+                    )
+                    ffmpeg_cmd += [
+                        "-c:v", "h264_mf", "-hw_encoding", "1",
+                        "-quality", str(quality), "-pix_fmt", "nv12",
+                    ]
+                else:
+                    ffmpeg_cmd += [
+                        "-c:v", "libx264", "-preset", "ultrafast",
+                        "-crf", str(crf), "-pix_fmt", "yuv420p",
+                    ]
+                ffmpeg_cmd += ["-fps_mode", "cfr", self._video_only_path]
+                try:
+                    self._ffmpeg_process = subprocess.Popen(
+                        ffmpeg_cmd, stdin=subprocess.PIPE,
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    )
+                    self._windows_video_started_at = time.perf_counter()
+                    time.sleep(0.5)
+                    self._windows_direct_capture = self._ffmpeg_process.poll() is None
+                    if not self._windows_direct_capture:
+                        self._ffmpeg_process = None
+                        self._windows_video_started_at = None
+                    else:
+                        console.print("[dim]Windows capture: FFmpeg desktop capture[/dim]")
+                except (OSError, subprocess.SubprocessError):
+                    self._ffmpeg_process = None
+                    self._windows_video_started_at = None
 
             # Rawvideo is intentionally kept CFR, but the capture loop below
             # duplicates frames when the real-time clock gets ahead of the
@@ -281,8 +336,14 @@ class ScreenRecorder:
 
             start = time.perf_counter()
             if self._audio_recorder and self._audio_recorder.started_at is not None:
-                # Rawvideo timestamps begin at the capture clock below.
-                self._audio_offset = self._audio_recorder.started_at - start
+                # Native Windows capture starts when FFmpeg launches, before
+                # the startup probe delay. Offset audio from that actual origin.
+                video_start = (
+                    self._windows_video_started_at
+                    if self._windows_direct_capture and self._windows_video_started_at
+                    else start
+                )
+                self._audio_offset = self._audio_recorder.started_at - video_start
             self._start_time = start
             self._capture_start_time = start
             self._pause_offset = 0.0
@@ -471,6 +532,7 @@ class ScreenRecorder:
                 self._ffmpeg_process.kill()
             self._ffmpeg_process = None
         self._windows_direct_capture = False
+        self._windows_video_started_at = None
 
         audio_path: Optional[str] = None
         if self._audio_recorder:
