@@ -6,7 +6,7 @@ Usage:
 
 Requirements:
     - Python 3.10+
-    - Windows 10/11 or Linux
+    - Linux (Wayland or X11)
     - FFmpeg (on PATH)
     - pip install mss sounddevice soundfile rich numpy
 """

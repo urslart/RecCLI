@@ -92,34 +92,21 @@ def format_file_size(size_bytes: int) -> str:
 
 
 def open_folder(path: str) -> None:
-    """Open a folder in the platform's default file manager."""
+    """Open a folder in the Linux desktop's default file manager."""
     folder = Path(path).resolve()
     try:
-        os.startfile(str(folder))  # type: ignore[attr-defined]
-    except AttributeError:
-        opener = "open" if sys.platform == "darwin" else "xdg-open"
-        try:
-            subprocess.Popen([opener, str(folder)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except OSError as e:
-            console.print(f"[red]Could not open folder: {e}[/red]")
+        subprocess.Popen(["xdg-open", str(folder)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except OSError as e:
         console.print(f"[red]Could not open folder: {e}[/red]")
 
 
 def clear_screen() -> None:
     """Clear the terminal screen."""
-    os.system("cls" if os.name == "nt" else "clear")
+    os.system("clear")
 
 
 def read_key(timeout: float = 0.05) -> str:
-    """Read one terminal key without blocking on Windows or Unix terminals."""
-    if os.name == "nt":
-        import msvcrt
-        if msvcrt.kbhit():
-            return msvcrt.getch().decode("utf-8", errors="ignore").lower()
-        time.sleep(timeout)
-        return ""
-
+    """Read one key from a Unix terminal without blocking."""
     import termios
     import tty
     if not sys.stdin.isatty():

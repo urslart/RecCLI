@@ -2,14 +2,13 @@
 
 import json
 import os
-import sys
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any
 
 
 # Default configuration values
-DEFAULT_FPS: int = 30 if os.name == "nt" else 60
+DEFAULT_FPS: int = 60
 DEFAULT_QUALITY: str = "high"
 DEFAULT_OUTPUT: str = str(Path.home() / "Videos" / "RecCLI")
 DEFAULT_COUNTDOWN: int = 3
@@ -17,13 +16,8 @@ DEFAULT_FILENAME_FORMAT: str = "recording_{YYYY}-{MM}-{DD}_{HH}-{MM}-{SS}"
 
 
 def get_config_path() -> Path:
-    """Return the per-user config path on the current platform."""
-    if os.name == "nt":
-        base = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
-    elif sys.platform == "darwin":
-        base = Path.home() / "Library" / "Application Support"
-    else:
-        base = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+    """Return the per-user Linux config path."""
+    base = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
     return base / "reccli" / "config.json"
 
 VALID_FPS_OPTIONS: list[int] = [15, 24, 30, 60]
