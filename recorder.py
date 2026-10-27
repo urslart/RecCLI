@@ -58,6 +58,8 @@ class ScreenRecorder:
         self._video_only_path: str = output_path
         self._wayland_process: Optional[subprocess.Popen] = None
         self._wayland_capture = os.name != "nt" and bool(os.environ.get("WAYLAND_DISPLAY"))
+        self._windows_ddagrab = False
+        self._windows_direct_capture = False
         self._audio_offset: float = 0.0
 
     def _audio_input_args(self, audio_path: str) -> list[str]:
@@ -110,6 +112,24 @@ class ScreenRecorder:
                 if not self._audio_recorder.initialize():
                     return False
             return True
+
+        if os.name == "nt" and shutil.which("ffmpeg"):
+            # Desktop Duplication keeps frames on the GPU instead of copying
+            # every full-screen frame through Python.
+            try:
+                filters = subprocess.run(
+                    ["ffmpeg", "-hide_banner", "-filters"],
+                    capture_output=True, text=True, timeout=10,
+                ).stdout
+                encoders = subprocess.run(
+                    ["ffmpeg", "-hide_banner", "-encoders"],
+                    capture_output=True, text=True, timeout=10,
+                ).stdout
+                self._windows_ddagrab = " ddagrab " in filters and " h264_mf " in encoders
+            except (OSError, subprocess.SubprocessError):
+                self._windows_ddagrab = False
+            if self._windows_ddagrab:
+                console.print("[dim]Windows capture: Desktop Duplication + Media Foundation[/dim]")
 
         if self.record_system_audio or self.record_mic:
             audio_path = self._get_audio_output_path()
@@ -184,13 +204,43 @@ class ScreenRecorder:
 
             crf = get_quality_crf(self.config.quality)
             preset = get_quality_preset(self.config.quality)
+            if os.name == "nt":
+                # Keep the software fallback responsive on Windows CPUs.
+                preset = "ultrafast"
 
-            if self._audio_recorder:
-                self._video_only_path = self.output_path.replace(
-                    ".mp4", "_video_only.mp4"
+            self._video_only_path = (
+                str(Path(self.output_path).with_name(Path(self.output_path).stem + "_video_only.mp4"))
+                if self._audio_recorder else self.output_path
+            )
+
+            if self._windows_ddagrab:
+                quality = {"low": 60, "medium": 78, "high": 90}.get(
+                    self.config.quality.lower(), 78
                 )
-            else:
-                self._video_only_path = self.output_path
+                ffmpeg_cmd = [
+                    "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                    "-f", "lavfi", "-i",
+                    f"ddagrab=framerate={self.config.fps}:draw_mouse=1",
+                    "-an", "-c:v", "h264_mf", "-hw_encoding", "1",
+                    "-quality", str(quality), "-pix_fmt", "nv12",
+                    "-fps_mode", "cfr", self._video_only_path,
+                ]
+                try:
+                    self._ffmpeg_process = subprocess.Popen(
+                        ffmpeg_cmd, stdin=subprocess.PIPE,
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    )
+                    time.sleep(0.5)
+                    if self._ffmpeg_process.poll() is None:
+                        self._windows_direct_capture = True
+                    else:
+                        self._ffmpeg_process = None
+                        console.print(
+                            "[yellow]Windows hardware capture could not start; "
+                            "falling back to software capture.[/yellow]"
+                        )
+                except (OSError, subprocess.SubprocessError):
+                    self._ffmpeg_process = None
 
             # Rawvideo is intentionally kept CFR, but the capture loop below
             # duplicates frames when the real-time clock gets ahead of the
@@ -213,12 +263,13 @@ class ScreenRecorder:
                 self._video_only_path,
             ]
 
-            self._ffmpeg_process = subprocess.Popen(
-                ffmpeg_cmd,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
+            if not self._windows_direct_capture:
+                self._ffmpeg_process = subprocess.Popen(
+                    ffmpeg_cmd,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
 
             # Start the audio streams before the video capture thread, then
             # establish the common recording clock immediately afterward.
@@ -240,12 +291,13 @@ class ScreenRecorder:
             self._is_paused = False
             self._is_recording = True
 
-            self._thread = threading.Thread(
-                target=self._capture_loop,
-                args=(width, height),
-                daemon=True,
-            )
-            self._thread.start()
+            if not self._windows_direct_capture:
+                self._thread = threading.Thread(
+                    target=self._capture_loop,
+                    args=(width, height),
+                    daemon=True,
+                )
+                self._thread.start()
             return True
 
         except FileNotFoundError:
@@ -301,7 +353,7 @@ class ScreenRecorder:
 
                     try:
                         img = sct.grab(monitor)
-                        frame_data = bytes(img.raw)
+                        frame_data = img.raw
                     except Exception:
                         if not self._is_recording:
                             break
@@ -342,6 +394,12 @@ class ScreenRecorder:
 
             if self._audio_recorder:
                 self._audio_recorder.pause()
+            if self._windows_direct_capture and self._ffmpeg_process and self._ffmpeg_process.stdin:
+                try:
+                    self._ffmpeg_process.stdin.write(b"p")
+                    self._ffmpeg_process.stdin.flush()
+                except (BrokenPipeError, OSError):
+                    pass
             if self._wayland_process and self._wayland_process.poll() is None:
                 try:
                     os.kill(self._wayland_process.pid, signal.SIGCONT if not self._is_paused else signal.SIGSTOP)
@@ -397,6 +455,11 @@ class ScreenRecorder:
 
         if self._ffmpeg_process and self._ffmpeg_process.stdin:
             try:
+                if self._windows_direct_capture:
+                    if self._is_paused:
+                        self._ffmpeg_process.stdin.write(b"p")
+                    self._ffmpeg_process.stdin.write(b"q")
+                    self._ffmpeg_process.stdin.flush()
                 self._ffmpeg_process.stdin.close()
             except Exception:
                 pass
@@ -407,6 +470,7 @@ class ScreenRecorder:
             except subprocess.TimeoutExpired:
                 self._ffmpeg_process.kill()
             self._ffmpeg_process = None
+        self._windows_direct_capture = False
 
         audio_path: Optional[str] = None
         if self._audio_recorder:

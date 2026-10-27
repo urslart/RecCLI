@@ -95,8 +95,13 @@ folder to your user PATH. Open a new terminal after installation, then run:
 reccli
 ```
 
-Windows uses FFmpeg from PATH for recording. To update, run `git pull` in the
-cloned folder and rerun `install.ps1`.
+Windows uses FFmpeg from PATH for recording. RecCLI uses FFmpeg's Desktop
+Duplication and Media Foundation hardware-encoding path when the installed
+FFmpeg build provides it, and falls back to software screen capture otherwise.
+New Windows configurations default to 30 FPS to reduce load; you can choose a
+higher rate in Settings. WASAPI loopback records the active speaker output;
+the Windows installer also installs the loopback audio dependency. To update,
+run `git pull` in the cloned folder and rerun `install.ps1`.
 Windows settings are stored in `%APPDATA%\reccli\config.json`, and recordings
 go to your `Videos\RecCLI` folder by default.
 
@@ -205,11 +210,11 @@ reccli/
 
 ## How It Works
 
-1. **Screen Capture**: Uses [MSS](https://python-mss.readthedocs.io/) on Windows and X11. On Wayland it uses `wf-recorder` to capture through the compositor's screencopy protocol.
+1. **Screen Capture**: Uses FFmpeg Desktop Duplication with Media Foundation hardware encoding on supported Windows FFmpeg builds, and [MSS](https://python-mss.readthedocs.io/) as a Windows fallback and on X11. On Wayland it uses `wf-recorder` to capture through the compositor's screencopy protocol.
 
-2. **Video Encoding**: FFmpeg encodes the raw frames to H.264 MP4 with configurable quality (CRF) and preset.
+2. **Video Encoding**: FFmpeg produces H.264 MP4. Windows uses Media Foundation quality settings when supported; the software paths use configurable CRF and presets.
 
-3. **Audio Capture**: Uses [SoundDevice](https://python-sounddevice.readthedocs.io/) with WASAPI loopback on Windows. On Linux, it records the default PipeWire monitor through the PulseAudio compatibility tools. Audio is saved via SoundFile/FFmpeg and converted to MP3.
+3. **Audio Capture**: Uses [PyAudioWPatch](https://pypi.org/project/PyAudioWPatch/) to select the active WASAPI speaker loopback on Windows, and SoundDevice for microphone input. On Linux, it records the default PipeWire monitor through the PulseAudio compatibility tools. Audio is converted to MP3 with FFmpeg.
 
 4. **Audio/Video Muxing**: When recording screen + audio, the video and audio are recorded separately and then muxed together by FFmpeg.
 

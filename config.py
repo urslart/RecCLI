@@ -9,7 +9,7 @@ from typing import Any
 
 
 # Default configuration values
-DEFAULT_FPS: int = 60
+DEFAULT_FPS: int = 30 if os.name == "nt" else 60
 DEFAULT_QUALITY: str = "high"
 DEFAULT_OUTPUT: str = str(Path.home() / "Videos" / "RecCLI")
 DEFAULT_COUNTDOWN: int = 3

@@ -11,6 +11,8 @@ import signal
 import shutil
 import subprocess
 import sys
+import threading
+import wave
 from pathlib import Path
 from typing import Optional
 
@@ -149,6 +151,16 @@ class AudioRecorder:
         self._pw_monitor: Optional[str] = None
         self._pw_process: Optional[subprocess.Popen] = None
         self._pw_wav_path = str(Path(output_path).with_suffix(".system.wav"))
+        self._wasapi_wav_path = str(Path(output_path).with_suffix(".system.wav"))
+        self._wasapi_manager = None
+        self._wasapi_stream = None
+        self._wasapi_wave = None
+        self._wasapi_thread: Optional[threading.Thread] = None
+        self._wasapi_stop = threading.Event()
+        self._wasapi_channels = 2
+        self._wasapi_sample_rate = 48000
+        self._wasapi_chunk_size = 1024
+        self._wasapi_error: Optional[Exception] = None
         self.started_at: Optional[float] = None
 
     def _system_callback(
@@ -183,6 +195,28 @@ class AudioRecorder:
                     console.print(f"[dim]System audio monitor: {self._pw_monitor} @ 48000 Hz[/dim]")
                 else:
                     console.print("[red]Could not find a PipeWire monitor source. Install/start PipeWire and ensure pactl and parec are available.[/red]")
+                    return False
+            elif os.name == "nt":
+                try:
+                    import pyaudiowpatch as pyaudio
+
+                    self._wasapi_manager = pyaudio.PyAudio()
+                    self._system_device = self._wasapi_manager.get_default_wasapi_loopback()
+                    self._wasapi_sample_rate = int(self._system_device["defaultSampleRate"])
+                    self._wasapi_channels = min(2, int(self._system_device["maxInputChannels"]))
+                    if self._wasapi_channels < 1:
+                        raise RuntimeError("the default speaker loopback has no input channels")
+                    self._system_sample_rate = self._wasapi_sample_rate
+                    console.print(
+                        f"[dim]System audio loopback: {self._system_device['name']} "
+                        f"@ {self._system_sample_rate} Hz[/dim]"
+                    )
+                except Exception as e:
+                    if self._wasapi_manager is not None:
+                        self._wasapi_manager.terminate()
+                        self._wasapi_manager = None
+                    console.print(f"[red]Could not initialize WASAPI speaker loopback: {e}[/red]")
+                    console.print("[yellow]Check that Windows has an active output device and update RecCLI.[/yellow]")
                     return False
             else:
                 self._system_device = get_loopback_device()
@@ -237,6 +271,28 @@ class AudioRecorder:
                 if self._pw_process.poll() is not None:
                     self._pw_process = None
                     raise RuntimeError("parec could not start on the monitor source")
+            elif self.record_system and os.name == "nt" and self._wasapi_manager:
+                import pyaudiowpatch as pyaudio
+
+                self._wasapi_stop.clear()
+                self._wasapi_error = None
+                self._wasapi_wave = wave.open(self._wasapi_wav_path, "wb")
+                self._wasapi_wave.setnchannels(self._wasapi_channels)
+                self._wasapi_wave.setsampwidth(self._wasapi_manager.get_sample_size(pyaudio.paInt16))
+                self._wasapi_wave.setframerate(self._system_sample_rate)
+                self._wasapi_stream = self._wasapi_manager.open(
+                    format=pyaudio.paInt16,
+                    channels=self._wasapi_channels,
+                    rate=self._system_sample_rate,
+                    input=True,
+                    input_device_index=self._system_device["index"],
+                    frames_per_buffer=self._wasapi_chunk_size,
+                )
+                self.started_at = time.perf_counter()
+                self._wasapi_thread = threading.Thread(
+                    target=self._wasapi_read_loop, daemon=True
+                )
+                self._wasapi_thread.start()
             elif self.record_system and self._system_device:
                 channels = min(
                     self._system_device.get("max_input_channels", 2),
@@ -277,9 +333,55 @@ class AudioRecorder:
             self.stop()
             return False
 
+    def _wasapi_read_loop(self) -> None:
+        """Read Windows speaker-loopback chunks and stream them to a WAV file."""
+        try:
+            while not self._wasapi_stop.is_set():
+                data = self._wasapi_stream.read(
+                    self._wasapi_chunk_size, exception_on_overflow=False
+                )
+                if not self._is_paused and data:
+                    self._wasapi_wave.writeframesraw(data)
+        except Exception as e:
+            if not self._wasapi_stop.is_set():
+                self._wasapi_error = e
+
+    def _stop_wasapi(self) -> None:
+        """Stop loopback reads and close the WAV and WASAPI resources."""
+        self._wasapi_stop.set()
+        if self._wasapi_stream is not None:
+            try:
+                if self._wasapi_stream.is_active():
+                    self._wasapi_stream.stop_stream()
+            except Exception:
+                pass
+        if self._wasapi_thread is not None:
+            self._wasapi_thread.join(timeout=5)
+            self._wasapi_thread = None
+        if self._wasapi_stream is not None:
+            try:
+                self._wasapi_stream.close()
+            except Exception:
+                pass
+            self._wasapi_stream = None
+        if self._wasapi_wave is not None:
+            try:
+                self._wasapi_wave.close()
+            except Exception:
+                pass
+            self._wasapi_wave = None
+        if self._wasapi_manager is not None:
+            try:
+                self._wasapi_manager.terminate()
+            except Exception:
+                pass
+            self._wasapi_manager = None
+
     def pause(self) -> None:
         """Toggle pause state."""
         self._is_paused = not self._is_paused
+        # The WASAPI reader keeps draining the endpoint while paused, but drops
+        # the samples so the resumed recording has no pause-time audio gap.
         if self._pw_process and self._pw_process.poll() is None:
             try:
                 os.kill(self._pw_process.pid, signal.SIGSTOP if self._is_paused else signal.SIGCONT)
@@ -343,6 +445,14 @@ class AudioRecorder:
             except Exception:
                 pass
             self._mic_stream = None
+
+        if self.record_system and os.name == "nt" and self._wasapi_manager is not None:
+            self._stop_wasapi()
+            if self._wasapi_error:
+                console.print(f"[yellow]WASAPI loopback stopped: {self._wasapi_error}[/yellow]")
+            audio_path = self._finish_external_system_audio(self._wasapi_wav_path)
+            self._wasapi_error = None
+            return audio_path
 
         if self._pw_process is not None:
             process = self._pw_process
@@ -431,7 +541,11 @@ class AudioRecorder:
 
     def _finish_pipewire_recording(self) -> Optional[str]:
         """Convert the PipeWire WAV capture, optionally mixing in microphone audio."""
-        system_wav = Path(self._pw_wav_path)
+        return self._finish_external_system_audio(self._pw_wav_path)
+
+    def _finish_external_system_audio(self, wav_path: str) -> Optional[str]:
+        """Convert an external system-audio WAV and optionally mix microphone input."""
+        system_wav = Path(wav_path)
         if not system_wav.exists() or system_wav.stat().st_size == 0:
             console.print("[yellow]No system audio data was captured.[/yellow]")
             return None
